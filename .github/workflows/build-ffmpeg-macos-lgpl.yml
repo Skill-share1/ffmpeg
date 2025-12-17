@@ -1,0 +1,184 @@
+name: Build LGPL FFmpeg for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: "FFmpeg version tag (e.g., n7.1)"
+        required: true
+        default: "n7.1"
+      create_release:
+        description: "Create a GitHub release"
+        type: boolean
+        default: true
+  push:
+    paths:
+      - ".github/workflows/build-ffmpeg-macos-lgpl.yml"
+    branches:
+      - main
+
+env:
+  FFMPEG_VERSION: ${{ github.event.inputs.ffmpeg_version || 'n7.1' }}
+
+jobs:
+  build:
+    name: Build FFmpeg (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          brew install nasm yasm pkg-config
+
+      - name: Clone FFmpeg
+        run: |
+          git clone --depth 1 --branch ${{ env.FFMPEG_VERSION }} https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+
+      - name: Configure FFmpeg (LGPL)
+        working-directory: ffmpeg-src
+        run: |
+          ./configure \
+            --prefix=${{ github.workspace }}/ffmpeg-build \
+            --arch=${{ matrix.arch }} \
+            --enable-shared \
+            --disable-static \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-version3 \
+            --enable-videotoolbox \
+            --enable-audiotoolbox \
+            --enable-hwaccel=h264_videotoolbox \
+            --enable-hwaccel=hevc_videotoolbox \
+            --enable-hwaccel=prores_videotoolbox \
+            --enable-hwaccel=vp9_videotoolbox \
+            --disable-libx264 \
+            --disable-libx265 \
+            --disable-libvpx \
+            --disable-libfdk-aac \
+            --disable-doc \
+            --disable-htmlpages \
+            --disable-manpages \
+            --disable-podpages \
+            --disable-txtpages \
+            --disable-programs \
+            --enable-avcodec \
+            --enable-avformat \
+            --enable-avutil \
+            --enable-swresample \
+            --enable-swscale \
+            --enable-postproc \
+            --extra-cflags="-mmacosx-version-min=11.0" \
+            --extra-ldflags="-mmacosx-version-min=11.0"
+
+      - name: Build FFmpeg
+        working-directory: ffmpeg-src
+        run: |
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Install FFmpeg
+        working-directory: ffmpeg-src
+        run: |
+          make install
+
+      - name: Fix dylib install names
+        run: |
+          cd ${{ github.workspace }}/ffmpeg-build/lib
+
+          for dylib in *.dylib; do
+            if [ -L "$dylib" ]; then
+              continue
+            fi
+
+            echo "Processing $dylib..."
+
+            install_name_tool -id "@rpath/$dylib" "$dylib"
+
+            for dep in $(otool -L "$dylib" | grep "${{ github.workspace }}/ffmpeg-build/lib" | awk '{print $1}'); do
+              dep_name=$(basename "$dep")
+              install_name_tool -change "$dep" "@rpath/$dep_name" "$dylib"
+            done
+          done
+
+          echo "Verifying install names..."
+          for dylib in *.dylib; do
+            if [ ! -L "$dylib" ]; then
+              echo "=== $dylib ==="
+              otool -L "$dylib" | head -5
+            fi
+          done
+
+      - name: Create archive
+        run: |
+          cd ${{ github.workspace }}
+          VERSION=$(echo "${{ env.FFMPEG_VERSION }}" | sed 's/^n//')
+          tar -cJf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz -C ffmpeg-build .
+
+          echo "Archive contents:"
+          tar -tvf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz | head -20
+
+          ls -la ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ffmpeg-macos-${{ matrix.arch }}
+          path: ffmpeg-*-lgpl-macos-${{ matrix.arch }}.tar.xz
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    if: ${{ github.event.inputs.create_release == 'true' || github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: |
+          find artifacts -type f -name "*.tar.xz"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FFmpeg ${{ env.FFMPEG_VERSION }} LGPL macOS
+          tag_name: ffmpeg-${{ env.FFMPEG_VERSION }}-lgpl-macos
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          body: |
+            ## FFmpeg ${{ env.FFMPEG_VERSION }} LGPL Build for macOS
+
+            This is an LGPL-licensed build of FFmpeg for macOS, compatible with commercial/closed-source distribution.
+
+            ### Features
+            - **License**: LGPL v2.1+ (no GPL components)
+            - **Hardware Acceleration**: VideoToolbox (H.264, HEVC, ProRes, VP9)
+            - **Audio**: AudioToolbox AAC encoder
+            - **Architectures**: x86_64 (Intel) and arm64 (Apple Silicon)
+            - **Minimum macOS**: 11.0 (Big Sur)
+
+            ### Excluded (GPL) Components
+            - libx264
+            - libx265
+            - libvpx
+            - libfdk-aac
+
+            ### Usage
+            Download the appropriate archive for your architecture and extract to `target/native-deps/`.
+          files: |
+            artifacts/**/*.tar.xz
