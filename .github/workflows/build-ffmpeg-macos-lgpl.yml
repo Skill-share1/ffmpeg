@@ -161,14 +161,35 @@ jobs:
 
           mkdir -p ffmpeg-package/lib
           mkdir -p ffmpeg-package/include
-          cp -R ffmpeg-build/lib/* ffmpeg-package/lib/
+
           cp -R ffmpeg-build/include/* ffmpeg-package/include/
+
+          for dylib in FFmpeg.framework/Libraries/*.dylib; do
+            cp "$dylib" ffmpeg-package/lib/
+          done
+
+          for link in ffmpeg-build/lib/*.dylib; do
+            if [ -L "$link" ]; then
+              target=$(readlink "$link")
+              link_name=$(basename "$link")
+              ln -sf "$target" "ffmpeg-package/lib/$link_name"
+            fi
+          done
+
           cp -R FFmpeg.framework ffmpeg-package/
 
           tar -cJf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz -C ffmpeg-package .
 
           echo "Archive contents:"
-          tar -tvf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz | head -30
+          tar -tvf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz | head -40
+
+          echo "Verifying lib/ install names:"
+          for dylib in ffmpeg-package/lib/*.dylib; do
+            if [ ! -L "$dylib" ]; then
+              echo "=== $(basename $dylib) ==="
+              otool -L "$dylib" | head -3
+            fi
+          done
 
           ls -la ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz
 
