@@ -107,6 +107,16 @@ jobs:
             cp "$dylib" "$FRAMEWORK_DIR/Libraries/"
           done
 
+          # Recreate the symlinks FFmpeg normally provides (e.g. libavutil.59.dylib -> libavutil.59.x.y.dylib).
+          # Some FFmpeg dylibs depend on these compatibility names at runtime.
+          for link in ${{ github.workspace }}/ffmpeg-build/lib/*.dylib; do
+            if [ -L "$link" ]; then
+              target=$(readlink "$link")
+              link_name=$(basename "$link")
+              ln -sf "$target" "$FRAMEWORK_DIR/Libraries/$link_name"
+            fi
+          done
+
           cat > "$FRAMEWORK_DIR/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -134,6 +144,11 @@ jobs:
 
           for dylib in *.dylib; do
             echo "Processing $dylib..."
+
+            if [ -L "$dylib" ]; then
+              echo "Skipping symlink $dylib"
+              continue
+            fi
 
             install_name_tool -id "@rpath/FFmpeg.framework/Libraries/$dylib" "$dylib"
 
