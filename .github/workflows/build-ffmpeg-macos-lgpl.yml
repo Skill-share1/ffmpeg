@@ -90,41 +90,85 @@ jobs:
         run: |
           make install
 
-      - name: Fix dylib install names
+      - name: Create FFmpeg.framework structure
         run: |
-          cd ${{ github.workspace }}/ffmpeg-build/lib
+          VERSION=$(echo "${{ env.FFMPEG_VERSION }}" | sed 's/^n//')
+          FRAMEWORK_DIR="${{ github.workspace }}/FFmpeg.framework"
 
-          for dylib in *.dylib; do
+          mkdir -p "$FRAMEWORK_DIR/Libraries"
+          mkdir -p "$FRAMEWORK_DIR/Headers"
+
+          cp -R ${{ github.workspace }}/ffmpeg-build/include/* "$FRAMEWORK_DIR/Headers/"
+
+          for dylib in ${{ github.workspace }}/ffmpeg-build/lib/*.dylib; do
             if [ -L "$dylib" ]; then
               continue
             fi
+            cp "$dylib" "$FRAMEWORK_DIR/Libraries/"
+          done
 
+          cat > "$FRAMEWORK_DIR/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleIdentifier</key>
+            <string>org.ffmpeg.FFmpeg</string>
+            <key>CFBundleName</key>
+            <string>FFmpeg</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>CFBundlePackageType</key>
+            <string>FMWK</string>
+          </dict>
+          </plist>
+          EOF
+
+          echo "Created FFmpeg.framework structure"
+          ls -la "$FRAMEWORK_DIR"
+          ls -la "$FRAMEWORK_DIR/Libraries"
+
+      - name: Fix dylib install names for framework
+        run: |
+          cd ${{ github.workspace }}/FFmpeg.framework/Libraries
+
+          for dylib in *.dylib; do
             echo "Processing $dylib..."
 
-            install_name_tool -id "@rpath/$dylib" "$dylib"
+            install_name_tool -id "@rpath/FFmpeg.framework/Libraries/$dylib" "$dylib"
+
+            for dep in $(otool -L "$dylib" | grep -E "@rpath/lib(av|sw|postproc)" | awk '{print $1}'); do
+              dep_name=$(basename "$dep")
+              install_name_tool -change "$dep" "@rpath/FFmpeg.framework/Libraries/$dep_name" "$dylib"
+            done
 
             for dep in $(otool -L "$dylib" | grep "${{ github.workspace }}/ffmpeg-build/lib" | awk '{print $1}'); do
               dep_name=$(basename "$dep")
-              install_name_tool -change "$dep" "@rpath/$dep_name" "$dylib"
+              install_name_tool -change "$dep" "@rpath/FFmpeg.framework/Libraries/$dep_name" "$dylib"
             done
           done
 
           echo "Verifying install names..."
           for dylib in *.dylib; do
-            if [ ! -L "$dylib" ]; then
-              echo "=== $dylib ==="
-              otool -L "$dylib" | head -5
-            fi
+            echo "=== $dylib ==="
+            otool -L "$dylib" | head -5
           done
 
       - name: Create archive
         run: |
           cd ${{ github.workspace }}
           VERSION=$(echo "${{ env.FFMPEG_VERSION }}" | sed 's/^n//')
-          tar -cJf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz -C ffmpeg-build .
+
+          mkdir -p ffmpeg-package/lib
+          mkdir -p ffmpeg-package/include
+          cp -R ffmpeg-build/lib/* ffmpeg-package/lib/
+          cp -R ffmpeg-build/include/* ffmpeg-package/include/
+          cp -R FFmpeg.framework ffmpeg-package/
+
+          tar -cJf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz -C ffmpeg-package .
 
           echo "Archive contents:"
-          tar -tvf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz | head -20
+          tar -tvf ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz | head -30
 
           ls -la ffmpeg-${VERSION}-lgpl-macos-${{ matrix.arch }}.tar.xz
 
