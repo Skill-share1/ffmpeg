@@ -38,7 +38,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install nasm yasm pkg-config
+          brew install nasm yasm pkg-config opus
 
       - name: Clone FFmpeg
         run: |
@@ -57,6 +57,7 @@ jobs:
             --disable-version3 \
             --enable-videotoolbox \
             --enable-audiotoolbox \
+            --enable-libopus \
             --enable-hwaccel=h264_videotoolbox \
             --enable-hwaccel=hevc_videotoolbox \
             --enable-hwaccel=prores_videotoolbox \
@@ -248,7 +249,7 @@ jobs:
             ### Features
             - **License**: LGPL v2.1+ (no GPL components)
             - **Hardware Acceleration**: VideoToolbox (H.264, HEVC, ProRes, VP9)
-            - **Audio**: AudioToolbox AAC encoder
+            - **Audio**: AudioToolbox AAC encoder, libopus (BSD license)
             - **Architectures**: x86_64 (Intel) and arm64 (Apple Silicon)
             - **Minimum macOS**: 11.0 (Big Sur)
 
