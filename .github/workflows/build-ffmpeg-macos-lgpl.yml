@@ -118,6 +118,8 @@ jobs:
             fi
           done
 
+          cp ${{ github.workspace }}/ffmpeg-src/COPYING.LGPLv2.1 "$FRAMEWORK_DIR/"
+
           cat > "$FRAMEWORK_DIR/Info.plist" << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
