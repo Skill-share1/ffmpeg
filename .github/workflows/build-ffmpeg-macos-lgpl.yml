@@ -68,6 +68,10 @@ jobs:
             --disable-libfdk-aac \
             --disable-xlib \
             --disable-sdl2 \
+            --disable-libxcb \
+            --disable-libxcb-shm \
+            --disable-libxcb-xfixes \
+            --disable-libxcb-shape \
             --disable-doc \
             --disable-htmlpages \
             --disable-manpages \
@@ -143,6 +147,33 @@ jobs:
           ls -la "$FRAMEWORK_DIR"
           ls -la "$FRAMEWORK_DIR/Libraries"
 
+      - name: Bundle external dependencies (libopus)
+        run: |
+          cd ${{ github.workspace }}/FFmpeg.framework/Libraries
+
+          echo "=== Bundling libopus from Homebrew ==="
+
+          OPUS_LIB=""
+          if [ -f "/opt/homebrew/opt/opus/lib/libopus.0.dylib" ]; then
+            OPUS_LIB="/opt/homebrew/opt/opus/lib/libopus.0.dylib"
+          elif [ -f "/usr/local/opt/opus/lib/libopus.0.dylib" ]; then
+            OPUS_LIB="/usr/local/opt/opus/lib/libopus.0.dylib"
+          fi
+
+          if [ -n "$OPUS_LIB" ]; then
+            echo "Copying libopus from: $OPUS_LIB"
+            cp "$OPUS_LIB" ./libopus.0.dylib
+
+            install_name_tool -id "@rpath/FFmpeg.framework/Libraries/libopus.0.dylib" libopus.0.dylib
+
+            ln -sf libopus.0.dylib libopus.dylib
+
+            echo "libopus bundled successfully"
+            ls -la libopus*
+          else
+            echo "WARNING: libopus not found in Homebrew paths"
+          fi
+
       - name: Fix dylib install names for framework
         run: |
           cd ${{ github.workspace }}/FFmpeg.framework/Libraries
@@ -166,12 +197,49 @@ jobs:
               dep_name=$(basename "$dep")
               install_name_tool -change "$dep" "@rpath/FFmpeg.framework/Libraries/$dep_name" "$dylib"
             done
+
+            for dep in $(otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local" | awk '{print $1}'); do
+              dep_name=$(basename "$dep")
+              echo "  Fixing Homebrew dependency: $dep -> @rpath/FFmpeg.framework/Libraries/$dep_name"
+              install_name_tool -change "$dep" "@rpath/FFmpeg.framework/Libraries/$dep_name" "$dylib"
+            done
           done
 
-          echo "Verifying install names..."
+      - name: Verify no external dependencies remain
+        run: |
+          cd ${{ github.workspace }}/FFmpeg.framework/Libraries
+
+          echo "=== Checking for remaining Homebrew/external dependencies ==="
+          FOUND_EXTERNAL=0
+
           for dylib in *.dylib; do
-            echo "=== $dylib ==="
-            otool -L "$dylib" | head -5
+            if [ -L "$dylib" ]; then
+              continue
+            fi
+
+            EXTERNAL_DEPS=$(otool -L "$dylib" | grep -E "/opt/homebrew|/usr/local" || true)
+            if [ -n "$EXTERNAL_DEPS" ]; then
+              echo "ERROR: $dylib still has external dependencies:"
+              echo "$EXTERNAL_DEPS"
+              FOUND_EXTERNAL=1
+            fi
+          done
+
+          if [ "$FOUND_EXTERNAL" -eq 1 ]; then
+            echo ""
+            echo "BUILD FAILED: External dependencies remain. These will cause runtime crashes on user machines."
+            exit 1
+          fi
+
+          echo "=== All dependencies verified ==="
+          echo ""
+          echo "Final dependency list for each library:"
+          for dylib in *.dylib; do
+            if [ ! -L "$dylib" ]; then
+              echo ""
+              echo "=== $dylib ==="
+              otool -L "$dylib"
+            fi
           done
 
       - name: Create archive
