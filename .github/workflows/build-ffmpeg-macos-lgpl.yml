@@ -66,6 +66,8 @@ jobs:
             --disable-libx265 \
             --disable-libvpx \
             --disable-libfdk-aac \
+            --disable-xlib \
+            --disable-sdl2 \
             --disable-doc \
             --disable-htmlpages \
             --disable-manpages \
