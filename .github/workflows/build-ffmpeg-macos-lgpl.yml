@@ -72,6 +72,7 @@ jobs:
             --disable-libxcb-shm \
             --disable-libxcb-xfixes \
             --disable-libxcb-shape \
+            --disable-lzma \
             --disable-doc \
             --disable-htmlpages \
             --disable-manpages \
